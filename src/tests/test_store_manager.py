@@ -28,11 +28,60 @@ def test_stock_flow(client):
     
     assert response.status_code == 201
     data = response.get_json()
-    assert data['product_id'] > 0 
+    product_id = data['product_id']
+    assert product_id > 0 
 
     # 2. Ajoutez 5 unités au stock de cet article (`POST /stocks`)
+    stock_data = {'product_id': product_id, 'quantity': 5}
+    response = client.post('/stocks',
+                          data=json.dumps(stock_data),
+                          content_type='application/json')
+    assert response.status_code == 201
+
     # 3. Vérifiez le stock, votre article devra avoir 5 unités dans le stock (`GET /stocks/:id`)
+    response = client.get(f'/stocks/{product_id}')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['product_id'] == product_id
+    assert data['quantity'] == 5
+
     # 4. Faites une commande de l'article que vous avez crée, 2 unités (`POST /orders`)
+    #creer user pour faire la commande
+    user_data = {'name': 'Test User', 'email': 'testuser@example.com'}
+    response = client.post('/users',
+                          data=json.dumps(user_data),
+                          content_type='application/json')
+    assert response.status_code == 201
+    data = response.get_json()
+    user_id = data['user_id']
+
+    order_data = {'user_id': user_id, 'items':[{'product_id': product_id, 'quantity': 2}]}
+    response = client.post('/orders',
+                          data=json.dumps(order_data),
+                          content_type='application/json')
+    assert response.status_code == 201
+    data = response.get_json()
+    order_id = data['order_id']
+    assert order_id > 0
+
     # 5. Vérifiez le stock encore une fois (`GET /stocks/:id`)
+    response = client.get(f'/stocks/{product_id}')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['product_id'] == product_id
+    assert data['quantity'] == 3  # 5 - 2 = 3
+
     # 6. Étape extra: supprimez la commande et vérifiez le stock de nouveau. Le stock devrait augmenter après la suppression de la commande.
-    assert "Le test n'est pas encore là" == 1
+    response = client.delete(f'/orders/{order_id}')
+    assert response.status_code == 200
+
+    response = client.get(f'/stocks/{product_id}')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['product_id'] == product_id
+    assert data['quantity'] == 5  # Stock should be back to 5 after order deletion
+
+    #reset db to before test by deleting user
+    response = client.delete(f'/users/{user_id}')
+    assert response.status_code == 200
+    

@@ -26,7 +26,6 @@ def set_stock_for_product(product_id, quantity):
             response_message = f"rows added, product {new_stock.product_id}"
             session.flush() 
             session.commit()
-  
         r = get_redis_conn()
         r.hset(f"stock:{product_id}", "quantity", quantity)
         return response_message
@@ -54,16 +53,19 @@ def update_stock_mysql(session, order_items, operation):
                 """),
                 {"pid": pid, "qty": qty}
             )
+            update_stock_redis(order_items, operation)
     except Exception as e:
         raise e
     
 def check_out_items_from_stock(session, order_items):
     """ Decrease stock quantities in Redis """
     update_stock_mysql(session, order_items, "-")
+    update_stock_redis(order_items, "-")
     
 def check_in_items_to_stock(session, order_items):
     """ Increase stock quantities in Redis """
     update_stock_mysql(session, order_items, "+")
+    update_stock_redis(order_items, "+")
 
 def update_stock_redis(order_items, operation):
     """ Update stock quantities in Redis """
@@ -77,10 +79,20 @@ def update_stock_redis(order_items, operation):
             if hasattr(item, 'product_id'):
                 product_id = item.product_id
                 quantity = item.quantity
+                name = item.name if hasattr(item, 'name') else None
+                sku = item.sku if hasattr(item, 'sku') else None
+                price = item.price if hasattr(item, 'price') else None
             else:
                 product_id = item['product_id']
                 quantity = item['quantity']
-            # TODO: ajoutez plus d'information sur l'article
+                if "name" and "sku" and "price" in item:
+                    name = item.get('name')
+                    sku = item.get('sku')
+                    price = item.get('price')
+                else:
+                    name = None
+                    sku = None
+                    price = None
             current_stock = r.hget(f"stock:{product_id}", "quantity")
             current_stock = int(current_stock) if current_stock else 0
             
@@ -89,7 +101,11 @@ def update_stock_redis(order_items, operation):
             else:  
                 new_quantity = current_stock - quantity
             
-            pipeline.hset(f"stock:{product_id}", "quantity", new_quantity)
+            pipeline.hset(f"stock:{product_id}",mapping = { "quantity": new_quantity,
+                                                          "name": name if name else r.hget(f"stock:{product_id}", "name"),
+                                                          "sku": sku if sku else r.hget(f"stock:{product_id}", "sku"),
+                                                          "price": str(price) if price else r.hget(f"stock:{product_id}", "price")
+                                                        })
         
         pipeline.execute()
     
@@ -104,16 +120,30 @@ def _populate_redis_from_mysql(redis_conn):
             text("SELECT product_id, quantity FROM stocks")
         ).fetchall()
 
+        products = session.execute(
+            text("SELECT id, name, sku, price FROM products")
+        ).fetchall()
+
         if not len(stocks):
             print("Il n'est pas nécessaire de synchronisér le stock MySQL avec Redis")
+            return
+        
+        if not len(products):
+            print("Il n'est pas nécessaire de synchronisér les produits MySQL avec Redis")
             return
         
         pipeline = redis_conn.pipeline()
         
         for product_id, quantity in stocks:
-            pipeline.hset(
-                f"stock:{product_id}", 
-                mapping={ "quantity": quantity }
+            for id, name, sku, price in products:
+                if id == product_id:
+                    pipeline.hset(
+                    f"stock:{product_id}", 
+                    mapping={ "quantity": quantity,
+                              "name": name,
+                              "sku": sku,
+                              "price": str(price)
+                            }
             )
         
         pipeline.execute()
@@ -124,3 +154,5 @@ def _populate_redis_from_mysql(redis_conn):
         raise e
     finally:
         session.close()
+
+_populate_redis_from_mysql(get_redis_conn())
