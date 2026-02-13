@@ -25,7 +25,6 @@ class EndpointTester:
         for attempt in range(self.max_retries):
             try:
                 self.logger.info(f"Calling {self.url} (attempt {attempt + 1}/{self.max_retries})")
-                
                 response = requests.post(
                     self.url, 
                     timeout=self.timeout,
